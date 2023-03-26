@@ -1,46 +1,22 @@
 #!/bin/bash
 
-# Check for NDK_TOOLCHAIN environment variable and abort if it is not set.
 if [[ -z "${NDK_TOOLCHAIN}" ]]; then
     echo "Please specify the Android NDK environment variable \"NDK_TOOLCHAIN\"."
     exit 1
 fi
 
-# Prerequisites.
-sudo apt install \
-golang \
-ninja-build \
-autogen \
-autoconf \
-libtool \
-build-essential \
--y || exit 1
+ROOT_DIR="$(pwd)"
 
-root="$(pwd)"
+chmod +x ./script/install-prerequisites.sh
+chmod +x ./script/git-patch.sh
 
-# Install protobuf compiler.
-cd "src/protobuf" || exit 1
-./autogen.sh
-./configure
-make -j"$(nproc)"
-sudo make install
-sudo ldconfig
-
-# Go back.
-cd "$root" || exit 1
-
-# Apply patches.
-git apply patches/incremental_delivery.patch --whitespace=fix
-git apply patches/libpng.patch --whitespace=fix
-git apply patches/selinux.patch  --whitespace=fix
-git apply patches/protobuf.patch --whitespace=fix
-git apply patches/aapt2.patch --whitespace=fix
-git apply patches/androidfw.patch --whitespace=fix
-git apply patches/boringssl.patch --whitespace=fix
+script/./install-prerequisites.sh
+cd "$ROOT_DIR" || exit 1
+script/./git-patch.sh
 
 # Define all the compilers, libraries and targets.
-api="30"
-architecture=$1
+MIN_SDK_VERSION="30"
+ARCH=$1
 declare -A compilers=(
     [x86_64]=x86_64-linux-android
     [x86]=i686-linux-android
@@ -61,31 +37,31 @@ declare -A target_abi=(
 )
 
 build_directory="build"
-aapt_binary_path="$root/$build_directory/cmake/aapt2"
+aapt_binary_path="$ROOT_DIR/$build_directory/cmake/aapt2"
 # Build all the target architectures.
-bin_directory="$root/dist/$architecture"
+bin_directory="$ROOT_DIR/dist/$ARCH"
 
 # switch to cmake build directory.
 [[ -d dir ]] || mkdir -p $build_directory && cd $build_directory || exit 1
 
 # Define the compiler architecture and compiler.
-compiler_arch="${compilers[$architecture]}"
-c_compiler="$compiler_arch$api-clang"
-cxx_compiler="${c_compiler}++"
+TARGET_HOST="${compilers[$ARCH]}"
+C_COMPILER="$TARGET_HOST$MIN_SDK_VERSION-clang"
+CXX_COMPILER="${C_COMPILER}++"
 
-# Copy libc.a to libpthread.a.
-lib_path="$NDK_TOOLCHAIN/sysroot/usr/lib/${lib_arch[$architecture]}/$api/"
-cp -n "$lib_path/libc.a"  "$lib_path/libpthread.a"
+# Copy libc++.a to libpthread.a.
+lib_path="$NDK_TOOLCHAIN/sysroot/usr/lib/${lib_arch[$ARCH]}/$MIN_SDK_VERSION"
+cp -n "$lib_path/libc++.a" "$lib_path/libpthread.a"
 
 # Run make for the target architecture.
 compiler_bin_directory="$NDK_TOOLCHAIN/bin/"
 cmake -GNinja \
--DCMAKE_C_COMPILER="$compiler_bin_directory$c_compiler" \
--DCMAKE_CXX_COMPILER="$compiler_bin_directory$cxx_compiler" \
+-DCMAKE_C_COMPILER="$NDK_TOOLCHAIN/bin/$C_COMPILER" \
+-DCMAKE_CXX_COMPILER="$NDK_TOOLCHAIN/bin/$CXX_COMPILER" \
 -DCMAKE_BUILD_WITH_INSTALL_RPATH=True \
 -DCMAKE_BUILD_TYPE=Release \
--DANDROID_ABI="$architecture" \
--DTARGET_ABI="${target_abi[$architecture]}" \
+-DANDROID_ABI="$ARCH" \
+-DTARGET_ABI="${target_abi[$ARCH]}" \
 -DPROTOC_PATH="/usr/local/bin/protoc" \
 -DCMAKE_SYSROOT="$NDK_TOOLCHAIN/sysroot" \
 .. || exit 1
@@ -99,3 +75,5 @@ mkdir -p "$bin_directory"
 
 # Move aapt2 to bin directory.
 mv "$aapt_binary_path" "$bin_directory"
+
+exit 0
